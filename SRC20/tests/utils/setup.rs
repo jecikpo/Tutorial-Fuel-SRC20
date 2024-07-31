@@ -24,7 +24,7 @@ abigen!(
 pub const DEFAULT_GAS_LIMIT: u64 = 400000;
 pub const DEFAULT_SUB_ID: Bits256 = Bits256([0; 32]);
 
-pub const SECRECT_KEY: &str = "<your secret key here>";
+pub const SECRECT_KEY: &str = "<your secret pass goes here>";
 
 pub const FUEL_NETWORK: &str = "127.0.0.1:4000";
 //pub const FUEL_NETWORK: &str = "testnet.fuel.network";
@@ -57,7 +57,7 @@ pub async fn get_src20_contract_instance() -> (SRC20<WalletUnlocked>, ContractId
     let (provider, wallet, salt) = get_wallet_provider_salt().await;
 
     let id = Contract::load_from(
-        "./SRC20/out/debug/src20.bin",
+        "./out/debug/src20.bin",
         LoadConfiguration::default().with_salt(salt),
     )
     .unwrap()
@@ -83,7 +83,7 @@ pub async fn get_src20_contract_instance_with_configurables(configurables: SRC20
     let (provider, wallet, salt) = get_wallet_provider_salt().await;
 
     let id = Contract::load_from(
-        "./SRC20/out/debug/src20.bin",
+        "./out/debug/src20.bin",
         LoadConfiguration::default()
         .with_salt(salt)
         .with_configurables(configurables),
