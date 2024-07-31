@@ -7,7 +7,9 @@ Prerequisites:
 1) Basic knowledge of Sway and Rust
 2) Familiarity with ERC20 standard
 3) Fuel SDK installed
-4) Knowledge of the UTXO concept
+4) Knowledge of the UTXO model
+
+This tutorial was written with forc version 0.60.0.
 
 Let's go.
 
@@ -16,7 +18,8 @@ The SRC20 is the equivalent of EVM ERC20 standard. It's description can be found
 Documentation provides information on the API that we are going to implement. There are
 couple of differences between the ERC20 and SRC20, primarly because the Fuel supports the 
 minted assets natively (they are referred to as Native Assets) and because Fuel uses UTXO
-model instead of account model.
+model instead of account model. We will explain those concepts later. Below is the excerpt
+from the standard.
 
 The standard requires implementation of the following public functions:
 
@@ -86,26 +89,28 @@ The `Identity` and `SubId` will be explained in detail in later sections.
 
 ## Native Assets and UTXO
 In Ethereum blockchain the ERC20 tokens are managed through the state variable contents of 
-the contract. When tokens are minted to an address, the `balanceOf` mapping is modified to 
+the contract. When tokens are minted to an address, the `balanceOf` mapping is updated to 
 reflect the balance of tokens of an account. This is not the case in Fuel. Here when an 
 asset is created (in Fuel we don't have Tokens, we have Coins, however in this tutorial
-I will use the words Tokens and Coins interchanbly) an UTXO is created with the desired
+I will use the terms Tokens and Coins interchanbly) an UTXO is created with the desired
 amount of Coins and it is transferred to an owner's address. You can read more about 
 the concept of UTXO [here](https://en.wikipedia.org/wiki/Unspent_transaction_output) and [here](https://learnmeabitcoin.com/technical/transaction/utxo/).
 
-A UTXO created by our SRC20 contract with some Coins can be treated as Fuel's Native 
+A UTXO created by our SRC20 contract containing some Coins can be treated as Fuel's Native 
 Asset. This means that it can be handled similarly to Ether on Ethereum. It can be transfered
 to some account independently of the SRC20 smart contract or it can be sent along with 
 a call to any contract.
 
-This has some interesting implications. For example the SRC20 contract doesn't need to have 
+This has some interesting implications. For example the SRC20 contract doesn't have 
 any transfer functions. All Coin transfers are handled through Fuel natively hence any specific
 actions on token transfers cannot be implemented.
+
+We also don't have approvals and approved accounts on Fuel.
 
 ## Identifiers
 
 *Contract ID* uniquely identifies a deployed contract and is created as a result of transaction
-of type `TransactionType.Create`. The number is generated in the following way:
+of type Create. The number is generated in the following way:
 
 ```
 sha256(0x4655454C ++ tx.data.salt ++ root(tx.data.witnesses[bytecodeWitnessIndex].data) ++ root_smt(tx.storageSlots))
@@ -126,11 +131,13 @@ Where the `SUB_IDENTIFIER` (later referred as Sub ID) is an identifier that uniq
 an Asset within the contract. In our example here we will create an SRC20 contract with just 
 a single asset and we will use the default Sub ID which has a value of zero.
 
+The Asset Id of transfered Coins to a contract can be verified.
+
 *Address* is an EOA address.
 
 All three identifiers (Contract ID, Asset ID and Address) are of 256 bits length.
 
-*Identity* - This is not a specific network identifier per se, but rather a commonly used data 
+*Identity* - This is not a specific network identifier *per se*, but rather a commonly used data 
 structure in Sway that represents either Contract ID or an Address. it is defined in Sway 
 in the following way:
 
@@ -153,7 +160,7 @@ forc init SRC20
 The above command will create the `SRC20` directory of the project and it's basic folder structure.
 The contract code will be in `src/main.sw` file and `Forc.toml` will contain forc settings. 
 Optionally you can change the name on of the `src/main.sw` file to something more meaningful, e.g. 
-`src/src20.sw` (this will be helpfull later on if you have multiple contracts as part of the same
+`src/src20.sw` (this will be helpfull later, if you have multiple contracts as part of the same
 project). If you decide to change the name of the Sway source file you should also change the 
 compiler entry point in the `Forc.toml` to reflect the new name: `entry = "src20.sw"`.
 
@@ -165,8 +172,24 @@ statement):
 ```rust
 use standards::{
     src20::SRC20,
-    src3:SRC3,
-}
+    src3::SRC3,
+};
+
+use std::{
+    asset::{
+        burn,
+        mint_to,
+    },
+    call_frames::msg_asset_id,
+    context::msg_amount,
+    constants::DEFAULT_SUB_ID,
+    string::String, 
+    storage::storage_api::{
+        read, 
+        write
+    },
+    asset_id::*,
+};
 ```
 
 We should also add the following to our `Forc.toml` to successfully import the Sway standards:
@@ -188,8 +211,24 @@ contract;
 
 use standards::{
     src20::SRC20,
-    src3:SRC3,
-}
+    src3::SRC3,
+};
+
+use std::{
+    asset::{
+        burn,
+        mint_to,
+    },
+    call_frames::msg_asset_id,
+    context::msg_amount,
+    constants::DEFAULT_SUB_ID,
+    string::String, 
+    storage::storage_api::{
+        read, 
+        write
+    },
+    asset_id::*,
+};
 
 impl SRC20 for Contract {
 
@@ -219,7 +258,8 @@ It will hold the total amount of Coins minted.
 
 Let's also add some configurable parameters of the contract. They can be set inside contract deployment
 transaction, once deployed they are immutable. This is similar to setting immutable variables in Solidity inside 
-a constructor. Note that Sway contracts don't have a constructor.
+a constructor. Note that Sway contracts don't have a constructor and the configurable variables 
+are not held in storage.
 
 ```rust
 configurable {
@@ -230,10 +270,11 @@ configurable {
 ```
 We have here three parameters which should be self descriptive in case you are familiar with ERC20. 
 They are also set here to default values, hence if they are not specified during contract deployment
-those values shall be assigned.
+the values above shall be assigned.
 
-Now we can start coding our functions. Let's start with the simplest one. All functions that are 
-part of the ABI should land within the `impl SRC20 for Contract` clause. The first one will be:
+Now we can start coding our methods. Let's start with the simplest one. All methods that are 
+part of the ABI should land within the `impl SRC20 for Contract` or `impl SRC3 for Contract` clauses, 
+generally this should match the `abi` defintions. The first one will be:
 
 ```rust
     #[storage(read)]
@@ -242,11 +283,11 @@ part of the ABI should land within the `impl SRC20 for Contract` clause. The fir
     }
 ```
 
-The `total_assets()` function returns the total amount of individual assets that are minted by this contract.
-We have only one asset here (one AssetId) hence we can safely hardcode the returned value of 1. This function
+The `total_assets()` method returns the total amount of individual assets that are minted by this contract.
+We have only one asset here (one AssetId) hence we can safely hardcode the returned value of 1. This method
 shall have a more complex logic if number of assets is dynamic (e.g. in case of an NFT). Note that the storage
 attribute is not necessary here because we are not touching any of the storage variables, yet we need to include
-it because our imported `abi` defines the function with it.
+it because our imported `abi` defines this function with it.
 
 Next we create the `total_supply()`:
 
@@ -298,7 +339,7 @@ Next we implement `name()`, `symbol()` and `decimals()` which are similar to the
         }
     }
 ```
-The inner mechanics of those three functions is similar to `total_supply()`, not here that the SRC20 standard
+The inner mechanics of those three functions is similar to `total_supply()`, note here that the SRC20 standard
 does not impose limitations on the length of the strings returned.
 
 Now we can switch to implementation of the SRC3 standard (minting and burning functions). Yes, they will be 
@@ -341,14 +382,14 @@ The last function that we need to add is `burn()`
     }
 ```
 
-Let's see what's inside. The first `require` statement checks if the Sub Id we provide as an argument is the 
-default one. We don't need to check that as the only asset we can burn will be the default one, but at least 
+Let's see what's inside. The first `require` statement checks if the Sub Id we provide is the 
+default one. We don't really need to check that as the only asset we can burn will be the default one, but at least 
 we want to use this to provide the revert reason to the user. Next `require` checks if the provided amount in
 the Input equal to the requested `amount`. We use the `==` operator here to make sure that the user doesn't 
 send more Coins that he wishes to burn, in such case the remaining amount would get stuck on the contract.
 Finally the third `require` statement checks if the sent asset is the Native Asset handled by that contract.
 This is an interesting thing because it is unique to Fuel. Do you remember that all Coins on Fuel are treated
-as Native Assets? (Just like Ether on Ethereum) This checks validate that the user doesn't send some other 
+as Native Assets? (Just like Ether on Ethereum) This check validates that the user doesn't send some other 
 asset to the contract when burning.
 
 Now we have our contract complete. Make sure that it looks the same as [the one here](https://github.com/jecikpo/Tutorial-Fuel-SRC20/blob/main/SRC20/src/src20.sw)
@@ -369,17 +410,17 @@ We won't need that file for now, but it won't hurt to have a look.
 ## Testing
 This section describes the testing framework I came up with to test my contracts on Fuel using the Fuel's 
 Rust SDK. My framework is a bit opinionated and contains a bit of overhead, but I decided to make it this way 
-so that writing tests resembles the ease of how it is done in Foundry for EVM.
+so that writing tests resembles the case of how it is done in Foundry for EVM.
 
 We will do the testing either on the local Fuel node, or the testnet.
 
 ### Testing Framework Overview
 Let's first describe the testing framework I created for test smart contracts for Fuel. I'm dividing my 
 framework into the following files:
-- `tests/harness.rs` - the main test file contains just `mod` statements to include other files
-- `tests/utils` directory - all helpers, wrappers and setup functions reside here
+- `tests/harness.rs` - the main test file contains just `mod` statements to include other files.
+- `tests/utils` directory - all helpers, wrappers and setup functions reside here.
 - `tests/utils/setup.rs` - file contains helper functions for setting up wallets and creation of smart contract
-instances
+instances.
 - `tests/utils/instance.rs` - generic trait and implemenation of a smart contract instance.
 - `tests/utils/<contract>.rs` - in this case it will be `tests/utils/src20.rs`, a dir containing wrapper functions
 of a specific smart contracts callable methods (all enclosed in an `impl`).
@@ -438,13 +479,21 @@ use fuels::{
         Bytes32,
         Bits256,
         SizedAsciiString,
-        Identity,
     }
 };
 
 use rand::Rng;
 use std::str::FromStr;
 use sha2::{Digest, Sha256};
+```
+
+We also need to add the following in order to use `rand` and `sha2` libs to the `Cargo.toml` 
+file under our project directory:
+
+```conf
+[dependencies]
+rand = "0.8"
+sha2 = { version = "0.10.7" }
 ```
 
 Then we need to add the `abigen` macro with our contract's name and a path to the :
@@ -504,7 +553,7 @@ pub async fn get_wallet_provider_salt() -> (Provider, WalletUnlocked, Salt) {
 }
 ```
 In this function we create the `provider` object which represents a connection to a live node, a `wallet`
-which we will use for signing our transaction and our Identity and the `salt`. The `salt` is needed 
+which we will use for signing our transaction, our Identity and the `salt`. The `salt` is needed 
 to create unique Contract Id. As of writing this, the Rust SDK uses default salt value of zero and hence
 each next deployment of the same bytcode will result in a failure. Refer to [this page](https://docs.fuel.network/docs/specs/identifiers/contract-id/) on how 
 the Contract Id value is computed.
@@ -519,7 +568,7 @@ pub async fn get_src20_contract_instance() -> (SRC20<WalletUnlocked>, ContractId
     let (provider, wallet, salt) = get_wallet_provider_salt().await;
 
     let id = Contract::load_from(
-        "./SRC20/out/debug/src20.bin",
+        "./out/debug/src20.bin",
         LoadConfiguration::default().with_salt(salt),
     )
     .unwrap()
@@ -543,11 +592,38 @@ It loads the contract's bytecode from the specified file and deploys it. Returns
 - `*base_asset_id` - is the ID of the base asset.
 
 A word of explanation regarding the Base Asset. Base Asset on FuelVM is Ether. Only Base Asset can be used to pay 
-gas fees. Don't confuse it with Native Asset which are all assets created on Fuel and are handled using UTXOs.
+gas fees. Don't confuse it with Native Asset which refers to all assets created on Fuel that are handled using UTXOs.
 
 We will now create one additional function, very similar to the above one, but this one will take the 
 `SRC20Configurables` type argument. This will allow us to set values of our configurable variables during
 contract deployment. 
+
+```rust
+pub async fn get_src20_contract_instance_with_configurables(configurables: SRC20Configurables) -> (
+    SRC20<WalletUnlocked>, 
+    ContractId, 
+    WalletUnlocked, 
+    AssetId) 
+{    
+    let (provider, wallet, salt) = get_wallet_provider_salt().await;
+
+    let id = Contract::load_from(
+        "./SRC20/out/debug/src20.bin",
+        LoadConfiguration::default()
+        .with_salt(salt)
+        .with_configurables(configurables),
+    )
+    .unwrap()
+    .deploy(&wallet, TxPolicies::default().with_script_gas_limit(400000).with_max_fee(400000))
+    .await
+    .unwrap();
+
+    let instance = SRC20::new(id.clone(), wallet.clone());
+    let base_asset_id = provider.base_asset_id();
+
+    (instance, id.into(), wallet, *base_asset_id)
+}
+```
 
 You might have noticed that we didn't explicitly define `SRC20Configurables` and `SRC20` types. This is true,
 those type are created by the `abigen` macro.
@@ -565,6 +641,22 @@ pub fn create_src20_configurables(name: &str, symbol: &str, decimals: u8) -> SRC
 }
 ```
 
+We also need some helper functions, to be able to calculate correct value of a default Asset Id
+for a given Contract Id:
+```rust
+pub fn get_asset_id(sub_id: Bytes32, contract: ContractId) -> AssetId {
+    let mut hasher = Sha256::new();
+    hasher.update(*contract);
+    hasher.update(*sub_id);
+    AssetId::new(*Bytes32::from(<[u8; 32]>::from(hasher.finalize())))
+}
+
+pub fn get_default_asset_id(contract: ContractId) -> AssetId {
+    let default_sub_id = Bytes32::from([0u8; 32]);
+    get_asset_id(default_sub_id, contract)
+}
+```
+
 Let's shift to the `tests/utils/instance.rs` file. It will contain certain Generic logic for our 
 smart contract testing implementation. This code is a bit of overhead, because it is not needed if you 
 are working on a single smart contract dapp. However once you have more than one contract deployed
@@ -573,15 +665,13 @@ using your test environment this will avoid duplication of certain code.
 You can just copy the entire file from [Tutorial repo](https://github.com/jecikpo/Tutorial-Fuel-SRC20/blob/main/tests/utils/instance.rs).
 
 Now we will focus on the wrappers for calling the ABI methods. As you will see the method chains required
-to call a smart contract are quite long hence wrapper usage is absolutely necessary if we want to make the 
+to call a smart contract are quite long hence wrapper usage is absolutely necessary if we want to keep the 
 tests readable.
 
 We will be writing all that in the `tests/utils/src20.rs` file. First let's add some imports:
 ```rust
-
 use fuels::{
     prelude::*, 
-    types::ContractId, 
     types::{
         AssetId,
         Bits256,
@@ -596,9 +686,7 @@ use crate::utils::setup::{
     get_src20_contract_instance_with_configurables,
     get_default_asset_id,
     DEFAULT_GAS_LIMIT,
-    DEFAULT_SUB_ID,
 };
-
 
 use crate::utils::instance::{
     ContractInstance,
@@ -775,7 +863,16 @@ them with those in the [Tutorial repo](https://github.com/jecikpo/Tutorial-Fuel-
 
 ### SRC20 Tests
 
-Now it's time to finally write our tests into the `tests/src20/coin.rs` file. 
+Now it's time to finally write our tests into the `tests/src20/coin.rs` file. First we need to 
+add imports:
+```rust
+use crate::utils::setup::*;
+use crate::utils::instance::*;
+
+use fuels::{
+    prelude::*,
+};
+```
 
 Each test function's name must:
 - start with a `test_` prefix.
@@ -794,6 +891,7 @@ async fn test_src20_name() {
         result, 
         Some(String::from("Token"))
     );
+}
 ```
 
 Let's explain it. First we call the `new()` constructor to instantiate the contract. Then we use 
