@@ -11,7 +11,11 @@ Prerequisites:
 
 This tutorial was written with forc version 0.60.0.
 
-Let's go.
+If you need to install Fuel SDK and Fuel Core check the links below:
+- [Toolchain Installation](https://docs.fuel.network/guides/installation/)
+- [Running Fuel Node Locally](https://docs.fuel.network/guides/running-a-node/running-a-local-node/)
+
+We will need those. Once you have everything set up, let's roll.
 
 ## SRC20 Standard
 The SRC20 is the equivalent of EVM ERC20 standard. It's description can be found [here](https://docs.fuel.network/docs/sway-standards/src-20-native-asset/).
